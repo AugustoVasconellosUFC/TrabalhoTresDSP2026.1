@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "beanie>=2.1.0",
+    "faker>=40.23.0",
     "fastapi>=0.138.1",
     "fastapi-pagination>=0.15.15",
     "minio>=7.2.20",
     "motor>=3.7.1",
+    "numpy>=2.5.0",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.32",
 ]
