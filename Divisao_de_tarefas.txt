@@ -1,0 +1,7 @@
+1. Migrar entidades e rotas do banco de dados orginal para endpoints e modelos do MongoDB:
+   A. Endereços e Pedidos (Augusto)
+   B. Usuários e Lojas (Kauan)
+   C. Produtos e Documentos (Luis)
+2. Adaptar script de carga inicial para o novo banco de dados (Augusto)
+3. Implementar MinIO para armanzenar arquivos de documentos (Kauan)
+4. Implementar Docker Compose para rodar as aplicações de FastAPI, MongoDB, e MinIO (Luis)
