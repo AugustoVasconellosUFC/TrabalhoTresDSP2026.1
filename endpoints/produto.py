@@ -1,35 +1,20 @@
-import os
 import io
-import math
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, status
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from beanie import PydanticObjectId
-from beanie.operators import In
 from fastapi_pagination import Page
 from fastapi_pagination.ext.beanie import paginate
-from minio import Minio
 
-from models.produto import Produto
-from models.loja import Loja
-from models.document import DocumentMetadata
+from entidades.produto import Produto
+from entidades.loja import Loja
+from entidades.documento import Documento
+from servicos.minio_service import minio_client, BUCKET_NAME
 
 router = APIRouter(prefix="/produtos", tags=["Produtos"])
-documentos_router = APIRouter(prefix="/documentos", tags=["Documentos"])
 
-# ==========================================
-# Configuração MinIO
-# ==========================================
-BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "produtos-bucket")
-minio_client = Minio(
-    os.getenv("MINIO_ENDPOINT", "minio:9000"),
-    access_key=os.getenv("MINIO_ROOT_USER", "minio_admin"),
-    secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minio_senha_segura"),
-    secure=False
-)
 
 # ==========================================
 # Esquemas Pydantic (Entrada de Dados)
@@ -83,7 +68,7 @@ async def buscar_produtos(nome: str = Query(..., description="Texto a buscar no 
     3. Retorna a lista resolvida.
     """
     return await Produto.find(
-        {"nome": {"$regex": nome, "$options": "i"}}, 
+        {"nome": {"$regex": nome, "$options": "i"}},
         fetch_links=True
     ).to_list()
 
@@ -107,7 +92,7 @@ async def buscar_produto(produto_id: str):
     """
     if not PydanticObjectId.is_valid(produto_id):
         raise HTTPException(status_code=400, detail="ID de produto inválido.")
-        
+
     produto = await Produto.get(PydanticObjectId(produto_id), fetch_links=True)
     if not produto:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
@@ -128,11 +113,11 @@ async def criar_produto(dados: ProdutoCreate):
     """
     if not PydanticObjectId.is_valid(dados.loja_id):
         raise HTTPException(status_code=400, detail="ID da loja inválido.")
-        
+
     loja = await Loja.get(PydanticObjectId(dados.loja_id))
     if not loja:
         raise HTTPException(status_code=404, detail="Loja não encontrada.")
-        
+
     produto = Produto(
         nome=dados.nome,
         descricao=dados.descricao,
@@ -153,11 +138,11 @@ async def atualizar_produto(produto_id: str, dados: ProdutoUpdate):
     3. Salva as alterações na base de dados.
     """
     produto = await buscar_produto(produto_id)
-    
+
     dados_dict = dados.model_dump(exclude_unset=True)
     for campo, valor in dados_dict.items():
         setattr(produto, campo, valor)
-        
+
     await produto.save()
     return produto
 
@@ -177,7 +162,7 @@ async def deletar_produto(produto_id: str):
 # Gestão de Ficheiros (Upload para Produto)
 # ==========================================
 
-@router.post("/{produto_id}/documents", response_model=DocumentMetadata, status_code=status.HTTP_201_CREATED)
+@router.post("/{produto_id}/documents", response_model=Documento, status_code=status.HTTP_201_CREATED)
 async def upload_documento_produto(produto_id: str, file: UploadFile = File(...)):
     """
     Lógica (Passo a Passo):
@@ -187,12 +172,12 @@ async def upload_documento_produto(produto_id: str, file: UploadFile = File(...)
     4. Grava o binário no MinIO utilizando o ID como nome.
     """
     produto = await buscar_produto(produto_id)
-    
+
     conteudo = await file.read()
     extensao = Path(file.filename).suffix.lower() if file.filename else ""
-    
+
     # 3. Metadados no Mongo
-    doc = DocumentMetadata(
+    doc = Documento(
         original_filename=file.filename or "sem_nome",
         content_type=file.content_type or "application/octet-stream",
         extension=extensao,
@@ -200,13 +185,13 @@ async def upload_documento_produto(produto_id: str, file: UploadFile = File(...)
         produto_id=produto.id
     )
     await doc.insert()
-    
+
     # 4. Binário no MinIO
     if not minio_client.bucket_exists(BUCKET_NAME):
         minio_client.make_bucket(BUCKET_NAME)
-        
+
     nome_fisico = f"{str(doc.id)}{extensao}"
-    
+
     try:
         minio_client.put_object(
             bucket_name=BUCKET_NAME,
@@ -218,11 +203,11 @@ async def upload_documento_produto(produto_id: str, file: UploadFile = File(...)
     except Exception:
         await doc.delete()
         raise HTTPException(status_code=500, detail="Erro ao guardar o ficheiro físico no servidor.")
-        
+
     return doc
 
 
-@router.get("/{produto_id}/documents", response_model=List[DocumentMetadata])
+@router.get("/{produto_id}/documents", response_model=List[Documento])
 async def listar_documentos_produto(produto_id: str):
     """
     Lógica (Passo a Passo):
@@ -231,65 +216,5 @@ async def listar_documentos_produto(produto_id: str):
     """
     if not PydanticObjectId.is_valid(produto_id):
         raise HTTPException(status_code=400, detail="ID de produto inválido.")
-        
-    return await DocumentMetadata.find(DocumentMetadata.produto_id == PydanticObjectId(produto_id)).to_list()
 
-
-# ==========================================
-# Router de Documentos (Metadados + Download)
-# ==========================================
-
-@documentos_router.get("/{doc_id}", response_model=DocumentMetadata, summary="Buscar metadados de um documento")
-async def buscar_documento(doc_id: str):
-    """
-    Lógica (Passo a Passo):
-    1. Valida o ID.
-    2. Tenta recuperar os metadados do MongoDB.
-    """
-    if not PydanticObjectId.is_valid(doc_id):
-        raise HTTPException(status_code=400, detail="ID de documento inválido.")
-        
-    doc = await DocumentMetadata.get(PydanticObjectId(doc_id))
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento não encontrado.")
-    return doc
-
-
-@documentos_router.get("/{doc_id}/download", summary="Download do arquivo")
-async def download_arquivo(doc_id: str):
-    """
-    Lógica (Passo a Passo):
-    1. Busca os metadados.
-    2. Solicita o ficheiro ao MinIO.
-    3. Retorna o conteúdo ao cliente num fluxo (Stream).
-    """
-    doc = await buscar_documento(doc_id)
-    nome_fisico = f"{str(doc.id)}{doc.extension}"
-    
-    try:
-        resposta_minio = minio_client.get_object(BUCKET_NAME, nome_fisico)
-        return StreamingResponse(
-            resposta_minio,
-            media_type=doc.content_type,
-            headers={"Content-Disposition": f"attachment; filename={doc.original_filename}"}
-        )
-    except Exception:
-        raise HTTPException(status_code=404, detail="Ficheiro não encontrado no servidor de storage.")
-
-@documentos_router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Deletar documento e arquivo")
-async def deletar_documento(doc_id: str):
-    """
-    Lógica (Passo a Passo):
-    1. Busca os metadados.
-    2. Tenta remover o objeto do MinIO.
-    3. Remove os metadados da base de dados.
-    """
-    doc = await buscar_documento(doc_id)
-    nome_fisico = f"{str(doc.id)}{doc.extension}"
-    
-    try:
-        minio_client.remove_object(BUCKET_NAME, nome_fisico)
-    except Exception:
-        pass # Garante que os metadados são apagados mesmo que o ficheiro falte
-        
-    await doc.delete()
+    return await Documento.find(Documento.produto_id == PydanticObjectId(produto_id)).to_list()

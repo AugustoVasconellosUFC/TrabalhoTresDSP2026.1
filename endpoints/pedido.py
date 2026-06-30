@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from beanie import PydanticObjectId, Link
 
 # Importando os modelos refatorados para o MongoDB/Beanie
-from entidades.pedido import Pedido
+from entidades.pedido import Pedido, ItemPedido
 from entidades.usuario import Usuario
 from entidades.produto import Produto
 
@@ -47,14 +47,15 @@ async def listar_pedidos(
     # Como os produtos estão embutidos, calculamos os valores em memória rapidamente via Python/Pydantic
     items_formatados = []
     for p in pedidos:
-        # Puxa o ID limpo do objeto Link do Beanie (sem carregar o usuário inteiro)
-        usuario_id = p.usuario.ref.id
+        # Puxa o ID limpo do objeto Link do Beanie (sem carregar o usuário inteiro).
+        # Convertemos para str porque o ObjectId bruto do BSON não é serializável em JSON.
+        usuario_id = str(p.usuario.ref.id)
         
         valor_total = sum(item.preco_unitario * item.quantidade for item in p.produtos)
         total_itens = sum(item.quantidade for item in p.produtos)
         
         items_formatados.append({
-            "id": p.id,
+            "id": str(p.id),
             "status": p.status,
             "usuario_id": usuario_id,
             "data_criacao": p.data_criacao,
@@ -148,7 +149,14 @@ async def pedidos_acima_do_valor(
             }
         }
     ]
-    return await Pedido.aggregate(pipeline).to_list()
+    resultados = await Pedido.aggregate(pipeline).to_list()
+
+    # Converte os ObjectId crus vindos da agregação para str (serializáveis em JSON)
+    for r in resultados:
+        r["pedido_id"] = str(r["pedido_id"])
+        if r.get("usuario_id") is not None:
+            r["usuario_id"] = str(r["usuario_id"])
+    return resultados
 
 
 @router.get(

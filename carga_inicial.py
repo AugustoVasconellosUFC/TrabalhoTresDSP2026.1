@@ -1,7 +1,6 @@
 import httpx
 import random
 import string
-import numpy as np
 from faker import Faker
 
 fake = Faker('pt_BR')
@@ -18,32 +17,35 @@ def senha_aleatoria(length):
     characters = string.ascii_letters + string.digits
     return ''.join(random.choices(characters, k=length))
 
-def gerar_usuario():
-    return {
-        "nome": fake.name(),
-        "email": fake.email(),
-        "senha": senha_aleatoria(random.randint(6, 12))
-    }
+def cep_falso():
+    numero_base = random.randint(10000000, 99999999)
+    cep = f"{numero_base:08d}"
+    return f"{cep[:5]}-{cep[5:]}"
 
-def gerar_endereco(usuarios_ids):
-    def cep_falso():
-        numero_base = random.randint(10000000, 99999999)
-        cep = f"{numero_base:08d}"
-        return f"{cep[:5]}-{cep[5:]}"
-    
+def gerar_endereco():
+    # Endereco é um documento embutido dentro do Usuario
     return {
         "rua": fake.street_name(),
         "cidade": fake.city(),
         "estado": fake.estado_sigla(),
         "cep": cep_falso(),
-        "usuario_id": random.choice(usuarios_ids)
+    }
+
+def gerar_usuario():
+    return {
+        "nome": fake.name(),
+        "email": fake.email(),
+        "senha": senha_aleatoria(random.randint(6, 12)),
+        "endereco": gerar_endereco(),
     }
 
 def gerar_loja():
     return {
-        "nome": fake.company(),
-        "email": fake.company_email(),
-        "senha": senha_aleatoria(random.randint(6, 12))
+        "nome_fantasia": fake.company(),
+        "razao_social": f"{fake.company()} {fake.company_suffix()}",
+        "cnpj": fake.cnpj(),
+        "telefone": fake.phone_number(),
+        "ativa": True,
     }
 
 produtos_base = [
@@ -69,7 +71,10 @@ def gerar_pedido(usuarios_ids, produtos_ids):
     return {
         "usuario_id": random.choice(usuarios_ids),
         "status": "pendente",
-        "produto_ids": carrinho
+        "produtos": [
+            {"produto_id": pid, "quantidade": random.randint(1, 5)}
+            for pid in carrinho
+        ],
     }
 
 # ---------------------------------------------------------------------
@@ -77,49 +82,48 @@ def gerar_pedido(usuarios_ids, produtos_ids):
 # ---------------------------------------------------------------------
 
 def executar_carga():
-    print(f"Iniciando a carga de {TOTAL_REGISTROS} registros por tabela via API...")
-    
+    print(f"Iniciando a carga de {TOTAL_REGISTROS} registros por entidade via API...")
+
     ids_usuarios = []
     ids_lojas = []
     ids_produtos = []
-    
+
     with httpx.Client(timeout=30.0) as client:
-        
+
         print("1. Cadastrando Usuarios...")
         for _ in range(TOTAL_REGISTROS):
             resp = client.post(f"{URL_API}/usuarios/", json=gerar_usuario())
-            if resp.status_code in [200, 201]:
-                ids_usuarios.append(resp.json().get("id"))
+            if resp.status_code in (200, 201):
+                ids_usuarios.append(resp.json().get("_id"))
 
         print("2. Cadastrando Lojas...")
         for _ in range(TOTAL_REGISTROS):
             resp = client.post(f"{URL_API}/lojas/", json=gerar_loja())
-            if resp.status_code in [200, 201]:
-                ids_lojas.append(resp.json().get("id"))
+            if resp.status_code in (200, 201):
+                ids_lojas.append(resp.json().get("_id"))
 
         if not ids_usuarios or not ids_lojas:
             print("Erro fatal: Nao foi possivel criar as entidades base.")
             return
 
-        print("3. Cadastrando Enderecos...")
-        for _ in range(TOTAL_REGISTROS):
-            client.post(f"{URL_API}/enderecos/", json=gerar_endereco(ids_usuarios))
-
-        print("4. Cadastrando Produtos...")
+        print("3. Cadastrando Produtos...")
         for _ in range(TOTAL_REGISTROS):
             resp = client.post(f"{URL_API}/produtos/", json=gerar_produto(ids_lojas))
-            if resp.status_code in [200, 201]:
-                ids_produtos.append(resp.json().get("id"))
+            if resp.status_code in (200, 201):
+                ids_produtos.append(resp.json().get("_id"))
 
         if not ids_produtos:
             print("Erro fatal: Nao foi possivel criar produtos.")
             return
 
-        print("5. Cadastrando Pedidos...")
+        print("4. Cadastrando Pedidos...")
         for _ in range(TOTAL_REGISTROS):
             client.post(f"{URL_API}/pedidos/", json=gerar_pedido(ids_usuarios, ids_produtos))
 
     print("Processo de carga inicial concluido.")
+    print(f"  Usuarios criados: {len(ids_usuarios)}")
+    print(f"  Lojas criadas:    {len(ids_lojas)}")
+    print(f"  Produtos criados: {len(ids_produtos)}")
 
 if __name__ == "__main__":
     executar_carga()

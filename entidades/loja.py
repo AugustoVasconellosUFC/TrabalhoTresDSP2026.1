@@ -1,33 +1,21 @@
 from typing import List, Optional
-from beanie import Document, Link
-from pydantic import Field, EmailStr
 from datetime import datetime, timezone
+from beanie import Document, PydanticObjectId
+from pydantic import Field
 
-# Importando o modelo embutido (BaseModel) de endereço
-from entidades.endereço import Endereco
 
-# Importando as outras entidades para criar os relacionamentos (Links)
-from entidades.loja import Loja
-from entidades.documento import Documento
+class Loja(Document):
+    nome_fantasia: str = Field(..., max_length=150, description="Nome fantasia da loja")
+    razao_social: str = Field(..., max_length=150, description="Razão social da loja")
+    cnpj: str = Field(..., description="CNPJ da loja")
+    telefone: Optional[str] = Field(None, description="Telefone de contato")
+    ativa: bool = Field(default=True, description="Indica se a loja está ativa")
 
-class Usuario(Document):
-    nome: str = Field(..., max_length=150, description="Nome completo do usuário")
-    email: EmailStr = Field(..., description="E-mail válido e único do usuário")
-    senha: str = Field(..., description="Hash da senha do usuário")
-    
-    # 1. Documento Embutido
-    # O endereço será salvo diretamente dentro do JSON/BSON do usuário no MongoDB
-    endereco: Optional[Endereco] = None
-    
-    # 2. Relacionamento Muitos-para-Muitos (N:M)
-    # Exemplo: O usuário pode seguir/favoritar várias lojas
-    lojas_favoritas: Optional[List[Link[Loja]]] = []
-    
-    # 3. Relacionamento Um-para-Muitos (1:N)
-    # Atendendo ao requisito: "A aplicação deve permitir que pelo menos uma entidade tenha um ou mais documentos associados."
-    documentos: Optional[List[Link[Documento]]] = []
-    
+    # Referência aos produtos da loja pelos seus IDs no MongoDB (relação 1:N).
+    # Guardamos apenas os IDs para evitar import circular com a entidade Produto.
+    produtos: Optional[List[PydanticObjectId]] = []
+
     data_criacao: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
-        name = "usuarios" # Define explicitamente o nome da coleção no MongoDB
+        name = "lojas"  # Nome da coleção no MongoDB
